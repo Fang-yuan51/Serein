@@ -1636,7 +1636,9 @@ keybinds-show-voice-global-availability = Global availability
 # Context: show_voice
 keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = Use voice shortcuts while another app is focused. When off, shortcuts only work while Serein is focused.
 # Context: section
-keybinds-navigation-switch-server = Switch to Server 1–9
+keybinds-navigation-switch-dms = Switch to Direct Messages
+# Context: section
+keybinds-navigation-switch-server = Switch to Server 1–8
 # Context: section
 keybinds-navigation-cycle-channel = Previous / Next Channel
 

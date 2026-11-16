@@ -23,11 +23,18 @@ jobs:
 
       - name: Create unprivileged builder
         run: |
-          useradd -m builder
-          chown -R builder:builder .
+          useradd --create-home builder
+          chown -R builder:builder /home/builder "$GITHUB_WORKSPACE"
 
       - name: Build Arch package
-        run: su builder -c "bash packaging/linux/build-package.sh arch"
+        run: |
+          runuser -u builder -- env HOME=/home/builder bash <<'BUILD'
+            set -eu
+            curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            export PATH="$HOME/.cargo/bin:$PATH"
+            rustup show active-toolchain
+            cargo xtask package --format arch
+          BUILD
 
       - name: Publish Arch package to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -36,4 +43,4 @@ jobs:
           name: Latest Custom Arch Build
           prerelease: true
           make_latest: "false"
-          files: "**/*.pkg.tar.zst"
+          files: "dist/*.pkg.tar.zst"

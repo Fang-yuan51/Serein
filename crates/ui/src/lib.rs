@@ -5152,7 +5152,7 @@ impl MessagingUi {
 		}) {
 			self.switcher.open(&ctx);
 		}
-		let (switch_server_idx, cycle_channel_dir) = if !settings_open
+		let (nav_digit, cycle_channel_dir) = if !settings_open
 			&& !self.switcher.is_open()
 			&& !self.ime_active
 			&& ctx.input(|input| {
@@ -5163,7 +5163,7 @@ impl MessagingUi {
 						.any(|event| matches!(event, egui::Event::Ime(_)))
 			}) {
 			ctx.input_mut(|input| {
-				let mut server_idx = None;
+				let mut digit = None;
 				let mut channel_dir = None;
 				let num_keys = [
 					egui::Key::Num1,
@@ -5180,11 +5180,11 @@ impl MessagingUi {
 					if input.consume_key(egui::Modifiers::COMMAND, key)
 						|| input.consume_key(egui::Modifiers::CTRL, key)
 					{
-						server_idx = Some(i);
+						digit = Some(i + 1);
 						break;
 					}
 				}
-				if server_idx.is_none() {
+				if digit.is_none() {
 					if input.consume_key(egui::Modifiers::COMMAND, egui::Key::ArrowUp)
 						|| input.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowUp)
 					{
@@ -5195,18 +5195,31 @@ impl MessagingUi {
 						channel_dir = Some(1i32);
 					}
 				}
-				(server_idx, channel_dir)
+				(digit, channel_dir)
 			})
 		} else {
 			(None, None)
 		};
 
-		if let Some(idx) = switch_server_idx {
-			let rail_guilds = rail_guild_ids(state);
-			if let Some(&guild_id) = rail_guilds.get(idx) {
-				self.guild = Some(guild_id);
-				if let Some(command) = state.select_guild(guild_id) {
+		if let Some(digit) = nav_digit {
+			if digit == 1 {
+				self.guild = None;
+				if let Some(command) = state.open_messages() {
 					commands.push(command);
+				}
+				self.search.open = false;
+				self.focus_switched_composer = state
+					.selected
+					.and_then(|channel| state.channel(channel))
+					.is_some_and(|known| known.supports_text());
+			} else {
+				let server_idx = digit - 2;
+				let rail_guilds = rail_guild_ids(state);
+				if let Some(&guild_id) = rail_guilds.get(server_idx) {
+					self.guild = Some(guild_id);
+					if let Some(command) = state.select_guild(guild_id) {
+						commands.push(command);
+					}
 				}
 			}
 		}

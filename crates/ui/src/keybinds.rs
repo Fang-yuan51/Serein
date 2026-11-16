@@ -254,8 +254,14 @@ fn section(
 			design::card_divider(ui);
 			static_row(
 				ui,
+				&crate::i18n::translate("keybinds-navigation-switch-dms"),
+				&[primary_key, "1"],
+			);
+			design::card_divider(ui);
+			static_row(
+				ui,
 				&crate::i18n::translate("keybinds-navigation-switch-server"),
-				&[primary_key, "1–9"],
+				&[primary_key, "2–9"],
 			);
 			design::card_divider(ui);
 			static_row(
