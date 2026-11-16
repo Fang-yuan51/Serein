@@ -107,7 +107,7 @@ fn open_output(
 	gate: Arc<Gate>,
 	generation: u64,
 ) -> Result<cpal::Stream, &'static str> {
-	let host = cpal::default_host();
+	let host = discord_voice::audio::default_host();
 	let device = host
 		.default_output_device()
 		.ok_or("No audio output device")?;

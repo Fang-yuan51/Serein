@@ -213,6 +213,19 @@ impl Cache {
 	pub(super) fn invalidate(&mut self) {
 		self.key = None;
 	}
+	pub(super) fn visible_channels(&self, state: &State) -> Vec<model::Id> {
+		let mut channels = Vec::new();
+		for row in &self.rows {
+			if let CachedRow::Channel(index, _, _) = *row {
+				if let Some(channel) = state.channels.get(index) {
+					if channel.supports_text() || channel.kind == 2 || matches!(channel.kind, 15 | 16) {
+						channels.push(channel.id);
+					}
+				}
+			}
+		}
+		channels
+	}
 }
 
 #[cfg(any(test, feature = "demo"))]

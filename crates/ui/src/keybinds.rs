@@ -249,6 +249,92 @@ fn section(
 			}
 			row(ui, action, bindings, capturing);
 		}
+		if title == "Navigation" {
+			let primary_key = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl" };
+			design::card_divider(ui);
+			static_row(
+				ui,
+				&crate::i18n::translate("keybinds-navigation-switch-server"),
+				&[primary_key, "1–9"],
+			);
+			design::card_divider(ui);
+			static_row(
+				ui,
+				&crate::i18n::translate("keybinds-navigation-cycle-channel"),
+				&[primary_key, "↑ / ↓"],
+			);
+		}
+	});
+}
+
+fn static_shortcut_badge(ui: &mut egui::Ui, parts: &[&str]) {
+	let colors = design::palette(ui);
+	let (rect, _) = ui.allocate_exact_size(egui::vec2(152.0, 34.0), egui::Sense::hover());
+	ui.painter().rect(
+		rect,
+		6,
+		colors.raised,
+		egui::Stroke::new(1.0, colors.border),
+		egui::StrokeKind::Inside,
+	);
+	let font = egui::FontId::new(11.0, design::medium_family(ui.ctx()));
+	let widths: Vec<f32> = parts
+		.iter()
+		.map(|label| {
+			ui.painter()
+				.layout_no_wrap((*label).to_string(), font.clone(), colors.text_strong)
+				.size()
+				.x + 14.0
+		})
+		.collect();
+	let total = widths.iter().sum::<f32>() + (widths.len().saturating_sub(1) as f32 * 4.0);
+	let mut x = rect.center().x - total * 0.5;
+	for (label, width) in parts.iter().zip(widths) {
+		let key_rect = egui::Rect::from_min_size(
+			egui::pos2(x, rect.center().y - 12.0),
+			egui::vec2(width, 24.0),
+		);
+		ui.painter().rect_filled(
+			egui::Rect::from_min_max(
+				key_rect.left_top(),
+				key_rect.right_bottom() + egui::vec2(0.0, 2.0),
+			),
+			4,
+			colors.border,
+		);
+		let face = key_rect.translate(egui::vec2(0.0, -1.0));
+		ui.painter().rect(
+			face,
+			4,
+			colors.chat,
+			egui::Stroke::new(1.0, colors.border),
+			egui::StrokeKind::Inside,
+		);
+		let galley = ui
+			.painter()
+			.layout_no_wrap((*label).to_string(), font.clone(), colors.text_strong);
+		ui.painter().galley(
+			face.center() - galley.size() * 0.5,
+			galley,
+			colors.text_strong,
+		);
+		x += width + 4.0;
+	}
+}
+
+fn static_row(ui: &mut egui::Ui, label: &str, parts: &[&str]) {
+	ui.horizontal(|ui| {
+		ui.set_min_height(46.0);
+		ui.allocate_ui_with_layout(
+			egui::vec2((ui.available_width() - 210.0).max(0.0), 46.0),
+			egui::Layout::left_to_right(egui::Align::Center),
+			|ui| {
+				ui.label(label);
+			},
+		);
+		ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+			static_shortcut_badge(ui, parts);
+		});
 	});
 }
 

@@ -708,6 +708,36 @@ enum MentionWrite {
 	DidNotFit,
 }
 
+fn rail_guild_ids(state: &State) -> Vec<model::Id> {
+	let mut seen = std::collections::BTreeSet::new();
+	if let Some(settings) = &state.guild_folders {
+		for folder in &settings.folders {
+			seen.extend(folder.guild_ids.iter().copied());
+		}
+	}
+	let mut guild_ids: Vec<model::Id> = state
+		.guilds
+		.iter()
+		.filter(|g| !seen.contains(&g.id))
+		.map(|g| g.id)
+		.collect();
+	if let Some(settings) = &state.guild_folders {
+		for folder in &settings.folders {
+			for &id in &folder.guild_ids {
+				if state.guild(id).is_some() && !guild_ids.contains(&id) {
+					guild_ids.push(id);
+				}
+			}
+		}
+	}
+	for g in &state.guilds {
+		if !guild_ids.contains(&g.id) {
+			guild_ids.push(g.id);
+		}
+	}
+	guild_ids
+}
+
 impl MessagingUi {
 	pub fn interaction_modal_id(&self) -> Option<Id> {
 		self.interaction_components.modal_id()
@@ -5121,6 +5151,118 @@ impl MessagingUi {
 				.any(|chord| crate::keybinds::pressed(input, chord))
 		}) {
 			self.switcher.open(&ctx);
+		}
+		let (switch_server_idx, cycle_channel_dir) = if !settings_open
+			&& !self.switcher.is_open()
+			&& !self.ime_active
+			&& ctx.input(|input| {
+				input.focused
+					&& !input
+						.events
+						.iter()
+						.any(|event| matches!(event, egui::Event::Ime(_)))
+			}) {
+			ctx.input_mut(|input| {
+				let mut server_idx = None;
+				let mut channel_dir = None;
+				let num_keys = [
+					egui::Key::Num1,
+					egui::Key::Num2,
+					egui::Key::Num3,
+					egui::Key::Num4,
+					egui::Key::Num5,
+					egui::Key::Num6,
+					egui::Key::Num7,
+					egui::Key::Num8,
+					egui::Key::Num9,
+				];
+				for (i, &key) in num_keys.iter().enumerate() {
+					if input.consume_key(egui::Modifiers::COMMAND, key)
+						|| input.consume_key(egui::Modifiers::CTRL, key)
+					{
+						server_idx = Some(i);
+						break;
+					}
+				}
+				if server_idx.is_none() {
+					if input.consume_key(egui::Modifiers::COMMAND, egui::Key::ArrowUp)
+						|| input.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowUp)
+					{
+						channel_dir = Some(-1i32);
+					} else if input.consume_key(egui::Modifiers::COMMAND, egui::Key::ArrowDown)
+						|| input.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowDown)
+					{
+						channel_dir = Some(1i32);
+					}
+				}
+				(server_idx, channel_dir)
+			})
+		} else {
+			(None, None)
+		};
+
+		if let Some(idx) = switch_server_idx {
+			let rail_guilds = rail_guild_ids(state);
+			if let Some(&guild_id) = rail_guilds.get(idx) {
+				self.guild = Some(guild_id);
+				if let Some(command) = state.select_guild(guild_id) {
+					commands.push(command);
+				}
+			}
+		}
+
+		if let Some(dir) = cycle_channel_dir {
+			let mut visible = self.channel_cache.visible_channels(state);
+			if visible.is_empty() {
+				visible = state
+					.channels
+					.iter()
+					.filter(|c| {
+						let matching_scope = match self.guild {
+							Some(gid) => c.guild == Some(gid),
+							None => c.guild.is_none(),
+						};
+						matching_scope
+							&& (c.supports_text() || c.kind == 2 || matches!(c.kind, 1 | 3 | 15 | 16))
+					})
+					.map(|c| c.id)
+					.collect();
+			}
+			if !visible.is_empty() {
+				let current_pos = state
+					.selected
+					.and_then(|sel| visible.iter().position(|&id| id == sel));
+				let next_pos = match current_pos {
+					Some(pos) => {
+						if dir < 0 {
+							if pos == 0 {
+								visible.len() - 1
+							} else {
+								pos - 1
+							}
+						} else {
+							(pos + 1) % visible.len()
+						}
+					}
+					None => {
+						if dir < 0 {
+							visible.len() - 1
+						} else {
+							0
+						}
+					}
+				};
+				let next_channel = visible[next_pos];
+				if state.selected != Some(next_channel) {
+					if let Some(command) = state.select(next_channel) {
+						commands.push(command);
+					}
+				}
+				self.focus_switched_composer = state.selected == Some(next_channel)
+					&& state
+						.channel(next_channel)
+						.is_some_and(|known| known.supports_text());
+			}
 		}
 		self.switcher_frame = self.switcher.is_open();
 		let direct_origin = (state.selected, state.request);

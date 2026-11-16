@@ -250,6 +250,21 @@ impl ServerMenu {
 		}
 		false
 	}
+	pub fn copy_id_item(&self, ui: &mut egui::Ui, guild: Id) -> bool {
+		if menu_row(
+			ui,
+			icons::Icon::Copy,
+			&crate::i18n::translate_if_key("server-menu-context-copy-server-id"),
+			design::palette(ui).text,
+		)
+		.clicked()
+		{
+			ui.ctx().copy_text(guild.to_string());
+			ui.close();
+			return true;
+		}
+		false
+	}
 	pub fn open_invite(&mut self, state: &mut State, guild: Id, channel: Id) {
 		if !state.can_create_server_invite(guild, channel) {
 			return;
@@ -373,6 +388,8 @@ impl ServerMenu {
 					}
 					ui.separator();
 					self.leave_item(ui, state, guild);
+					ui.separator();
+					self.copy_id_item(ui, guild);
 					if !available {
 						ui.small(crate::i18n::translate_if_key(
 							if state.server_action_pending() {

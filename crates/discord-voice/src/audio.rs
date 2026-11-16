@@ -23,8 +23,19 @@ pub struct DeviceList {
 	pub inputs: Vec<(String, String)>,
 	pub outputs: Vec<(String, String)>,
 }
+
+pub fn default_host() -> cpal::Host {
+	#[cfg(target_os = "linux")]
+	{
+		if let Ok(host) = cpal::host_from_id(cpal::HostId::PulseAudio) {
+			return host;
+		}
+	}
+	cpal::default_host()
+}
+
 pub fn devices() -> Result<DeviceList, &'static str> {
-	let host = cpal::default_host();
+	let host = default_host();
 	let mut list = DeviceList {
 		inputs: vec![],
 		outputs: vec![],
@@ -658,7 +669,7 @@ impl Streams {
 		{
 			return Err("Call changed before audio devices could open");
 		}
-		let host = cpal::default_host();
+		let host = default_host();
 		let output = choose(&host, settings.output.as_deref(), false)?;
 		let output_id = output.id().ok().map(|id| id.to_string());
 		let output_config = platform::audio::output_config(

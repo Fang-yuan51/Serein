@@ -1635,6 +1635,10 @@ keybinds-show-voice-enable-global-keybinds = Enable global keybinds
 keybinds-show-voice-global-availability = Global availability
 # Context: show_voice
 keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = Use voice shortcuts while another app is focused. When off, shortcuts only work while Serein is focused.
+# Context: section
+keybinds-navigation-switch-server = Switch to Server 1–9
+# Context: section
+keybinds-navigation-cycle-channel = Previous / Next Channel
 
 ## crates/ui/src/lib.rs
 # Context: account_card
@@ -3123,6 +3127,8 @@ server-menu-show-leaving = Leaving…
 server-menu-show-offline-preview-no-server-changes = Offline preview · no server changes
 # Context: show
 server-menu-show-you-will-not-be-able-to-rejoin-this-server-unless = You will not be able to rejoin this server unless you are re-invited.
+# Context: context
+server-menu-context-copy-server-id = Copy Server ID
 
 ## crates/ui/src/server_roles.rs
 # Context: display
@@ -4165,6 +4171,8 @@ user-menu-contents-unblock = Unblock
 user-menu-contents-unmute-conversation = Unmute Conversation
 # Context: contents
 user-menu-contents-unpin-dm = Unpin DM
+# Context: contents
+user-menu-contents-copy-user-id = Copy User ID
 
 ## crates/ui/src/verification.rs
 # Context: show

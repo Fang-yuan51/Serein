@@ -120,6 +120,11 @@ impl GroupMenu {
 				ui.close();
 			}
 		});
+		ui.separator();
+		if row(ui, "channel-menu-context-copy-channel-id", colors.text).clicked() {
+			ui.ctx().copy_text(channel.id.to_string());
+			ui.close();
+		}
 		if !enabled {
 			ui.small(crate::i18n::translate(
 				"group-menu-menu-group-actions-unavailable-while-disconnected-or-busy",

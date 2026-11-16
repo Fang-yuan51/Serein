@@ -642,6 +642,7 @@ impl MessagingUi {
 								self.guild = Some(id);
 							}
 							ui.separator();
+							self.server_menu.copy_id_item(ui, id);
 						}
 						if let Item::Folder(id) = item {
 							ui.set_width(232.0);

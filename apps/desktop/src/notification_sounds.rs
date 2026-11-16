@@ -200,7 +200,9 @@ fn open(
 	status: Arc<AtomicU8>,
 	finished: Arc<AtomicBool>,
 ) -> Result<(cpal::Stream, Duration), ()> {
-	let device = cpal::default_host().default_output_device().ok_or(())?;
+	let device = discord_voice::audio::default_host()
+		.default_output_device()
+		.ok_or(())?;
 	let supported = platform::audio::output_config(
 		&device,
 		platform::audio::OutputConfigPreference::Notification,

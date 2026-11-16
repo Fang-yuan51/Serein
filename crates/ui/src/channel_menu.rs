@@ -402,6 +402,11 @@ impl ChannelMenu {
 				self.generation = state.generation;
 				ui.close();
 			}
+			ui.separator();
+			if row(ui, "server-menu-context-copy-server-id", true, false).clicked() {
+				ui.ctx().copy_text(guild.to_string());
+				ui.close();
+			}
 		});
 	}
 

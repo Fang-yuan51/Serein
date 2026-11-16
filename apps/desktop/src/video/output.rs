@@ -110,7 +110,7 @@ pub fn open(rate: u32, controls: Controls) -> Result<Output, &'static str> {
 	if !(8000..=96000).contains(&rate) {
 		return Err("Unsupported video audio sample rate");
 	}
-	let host = cpal::default_host();
+	let host = discord_voice::audio::default_host();
 	let device = host
 		.default_output_device()
 		.ok_or("No audio output device")?;

@@ -465,19 +465,12 @@ extern "C" fn subscribed(_: *mut pulse::pa_context, ok: i32, data: *mut c_void) 
 struct Capture {
 	stream: *mut pulse::pa_stream,
 	pending: Pending,
-	input: Input,
-	/// When this attachment was made, to bound how long it may take to connect.
 	started: Instant,
-	/// Set once a later listing showed the same application still holding this index, so the
-	/// index cannot have been recycled under the attachment.
 	verified: bool,
 }
 impl Capture {
-	fn start(native: &Native, input: Input, epoch: u64) -> Result<Self, &'static str> {
-		if input.index == pulse::PA_INVALID_INDEX
-			|| input.sink == pulse::PA_INVALID_INDEX
-			|| input.monitor.is_none()
-		{
+	fn start(native: &Native, monitor: &CStr, epoch: u64) -> Result<Self, &'static str> {
+		if monitor.to_bytes().is_empty() {
 			return Err(UNAVAILABLE);
 		}
 		let spec = pulse::pa_sample_spec {
@@ -490,7 +483,7 @@ impl Capture {
 		let stream = unsafe {
 			pulse::pa_stream_new(
 				native.context,
-				c"Serein isolated screen audio".as_ptr(),
+				c"Serein screen audio".as_ptr(),
 				&spec,
 				null(),
 			)
@@ -501,7 +494,6 @@ impl Capture {
 		let capture = Self {
 			stream,
 			pending: Pending::new(epoch),
-			input,
 			started: Instant::now(),
 			verified: false,
 		};
@@ -512,18 +504,13 @@ impl Capture {
 			prebuf: u32::MAX,
 			minreq: u32::MAX,
 		};
-		// Pulse requires the sink's monitor source before it can isolate one sink input.
-		// DONT_MOVE forbids policy/device fallback to a microphone or another monitor.
-		// SAFETY: valid unconnected stream. Set monitor BEFORE connecting; failure returns
-		// without retrying a default source, so no microphone or whole-output fallback.
 		unsafe {
-			if pulse::pa_stream_set_monitor_stream(stream, capture.input.index) < 0
-				|| pulse::pa_stream_connect_record(
-					stream,
-					capture.input.monitor.as_ref().unwrap().as_ptr(),
-					&attr,
-					pulse::PA_STREAM_DONT_MOVE | pulse::PA_STREAM_ADJUST_LATENCY,
-				) < 0
+			if pulse::pa_stream_connect_record(
+				stream,
+				monitor.as_ptr(),
+				&attr,
+				pulse::PA_STREAM_ADJUST_LATENCY,
+			) < 0
 			{
 				return Err(UNAVAILABLE);
 			}
@@ -539,10 +526,7 @@ impl Capture {
 		// from it until the next native operation. Lengths are checked before making slices.
 		unsafe {
 			let attr = pulse::pa_stream_get_buffer_attr(self.stream);
-			if pulse::pa_stream_get_monitor_stream(self.stream) != self.input.index
-				|| attr.is_null()
-				|| (*attr).maxlength as usize > MAX_AUDIO_SAMPLES * 4
-			{
+			if attr.is_null() || (*attr).maxlength as usize > MAX_AUDIO_SAMPLES * 4 {
 				return Err(UNAVAILABLE);
 			}
 			for _ in 0..4 {
@@ -630,6 +614,28 @@ impl Pending {
 	}
 }
 
+fn default_sink_monitor(fallback_monitors: &[(u32, CString)]) -> Option<CString> {
+	if let Ok(output) = std::process::Command::new("pactl")
+		.arg("get-default-sink")
+		.output()
+	{
+		if output.status.success() {
+			if let Ok(stdout) = std::str::from_utf8(&output.stdout) {
+				let sink = stdout.trim();
+				if !sink.is_empty() {
+					if let Ok(c_str) = CString::new(format!("{}.monitor", sink)) {
+						return Some(c_str);
+					}
+				}
+			}
+		}
+	}
+	if let Some((_, monitor)) = fallback_monitors.first() {
+		return Some(monitor.clone());
+	}
+	CString::new("@DEFAULT_MONITOR@").ok()
+}
+
 fn run(
 	send: tokio::sync::mpsc::Sender<AudioChunk>,
 	stop: &AtomicBool,
@@ -640,18 +646,15 @@ fn run(
 	let mut metrics = crate::diagnostics::Metrics::new(crate::diagnostics::Scope::ScreenAudio);
 	let mut native = Native::new()?;
 	let mut listing: Option<Enumeration> = None;
-	let mut captures: Vec<Capture> = Vec::new();
-	// Applications whose monitor was refused. Their audio is dropped, not the share.
-	let mut excluded: Vec<Input> = Vec::new();
+	let mut capture: Option<Capture> = None;
+	let mut fallback_monitors: Vec<(u32, CString)> = Vec::new();
 	let mut active_epoch = epoch.load(Ordering::Acquire);
 	let mut active_revision = native.events.revision.get();
 	let started = Instant::now();
 	let mut next_listing = started;
 	let mut last_tick = started;
 	while !stop.load(Ordering::Acquire) && !send.is_closed() {
-		// Advance a fixed cadence instead of accumulating scheduler delay. A late tick
-		// catches up one frame per dispatch; >=100 ms stalls discard queued samples.
-		let timeout_ms = if captures.iter().any(|capture| capture.verified) {
+		let timeout_ms = if capture.as_ref().is_some_and(|c| c.verified) {
 			TICK.saturating_sub(last_tick.elapsed())
 				.as_micros()
 				.div_ceil(1000) as i32
@@ -671,92 +674,58 @@ fn run(
 			None if started.elapsed() > TIMEOUT => return Err(UNAVAILABLE),
 			None => continue,
 		}
-		// An encryption transition, or a share that is no longer secure, must drop every
-		// captured sample: queued audio belongs to the generation that produced it.
 		let current_epoch = epoch.load(Ordering::Acquire);
 		if !ready.load(Ordering::Acquire) || current_epoch != active_epoch {
-			if !captures.is_empty() {
+			if capture.is_some() {
 				metrics.poll(true, 0, false, 0);
 			}
-			captures.clear();
+			capture = None;
 			listing = None;
 			active_epoch = current_epoch;
 			next_listing = Instant::now();
 		}
-		// A reported roster change only brings the next listing forward. It never tears down
-		// a running attachment, because these reports arrive continuously on some servers and
-		// rebuilding for each one would never finish confirming anything.
 		let current_revision = native.events.revision.get();
 		if current_revision != active_revision {
 			active_revision = current_revision;
 			next_listing = Instant::now();
 		}
-		// Coalesce events while one bounded request completes. Do not accumulate callbacks.
-		if let Some(request) = listing.as_mut()
-			&& let Some(inputs) = request.take()?
-		{
-			listing = None;
-			if ready.load(Ordering::Acquire) {
-				let inputs: Vec<Input> = inputs
-					.into_iter()
-					.filter(|input| !excluded.contains(input))
-					.collect();
-				metrics.add(crate::diagnostics::Stage::CaptureRestart, Duration::ZERO);
-				metrics.capture(crate::diagnostics::Capture::Inputs, inputs.len() as u64);
-				// Applications that stopped, and indices that now belong to someone else.
-				captures.retain(|capture| inputs.contains(&capture.input));
-				// Listed again under the same identity, so the index cannot have been
-				// recycled under the attachment: the same guarantee the paired listing gave.
-				for capture in &mut captures {
-					if !capture.verified && capture.state() == pulse::PA_STREAM_READY {
-						capture.verified = true;
-						metrics.capture(crate::diagnostics::Capture::Ready, 1);
-					}
-				}
-				for input in inputs {
-					if captures.len() >= MAX_INPUTS
-						|| captures.iter().any(|capture| capture.input == input)
-					{
-						continue;
-					}
-					// One application refusing to be captured must not cost the others.
-					match Capture::start(&native, input.clone(), active_epoch) {
-						Ok(capture) => {
-							metrics.capture(crate::diagnostics::Capture::Started, 1);
-							captures.push(capture);
-						}
-						Err(_) => {
-							metrics.capture(crate::diagnostics::Capture::Excluded, 1);
-							exclude(&mut excluded, input);
-						}
-					}
-				}
+		if let Some(request) = listing.as_mut() {
+			if let Ok(Some(_)) = request.take() {
+				fallback_monitors = request.listing.monitors.clone();
+				listing = None;
 			}
 		}
 		if !ready.load(Ordering::Acquire) {
 			continue;
 		}
-		// An attachment that failed, or that never connected, names an index its application
-		// has already replaced. Retry from the next listing rather than excluding the
-		// application, whose new stream is listed under a new index.
-		let before = captures.len();
-		captures.retain(|capture| {
-			let state = capture.state();
-			!matches!(state, pulse::PA_STREAM_FAILED | pulse::PA_STREAM_TERMINATED)
-				&& (state == pulse::PA_STREAM_READY || capture.started.elapsed() <= CONNECT)
-		});
-		if captures.len() != before {
-			metrics.capture(
-				crate::diagnostics::Capture::Dropped,
-				(before - captures.len()) as u64,
-			);
-			next_listing = Instant::now();
+		if let Some(c) = &capture {
+			let state = c.state();
+			if matches!(state, pulse::PA_STREAM_FAILED | pulse::PA_STREAM_TERMINATED)
+				|| (state != pulse::PA_STREAM_READY && c.started.elapsed() > CONNECT)
+			{
+				capture = None;
+				next_listing = Instant::now();
+			}
 		}
 		if listing.is_none() && Instant::now() >= next_listing {
-			listing = Some(Enumeration::start(&native, &own)?);
+			listing = Enumeration::start(&native, &own).ok();
 			next_listing = Instant::now() + LISTING;
 		}
-		if !captures.iter().any(|capture| capture.verified) || last_tick.elapsed() < TICK {
+		if capture.is_none() {
+			if let Some(monitor) = default_sink_monitor(&fallback_monitors) {
+				if let Ok(c) = Capture::start(&native, &monitor, active_epoch) {
+					metrics.capture(crate::diagnostics::Capture::Started, 1);
+					capture = Some(c);
+				}
+			}
+		}
+		if let Some(c) = &mut capture {
+			if !c.verified && c.state() == pulse::PA_STREAM_READY {
+				c.verified = true;
+				metrics.capture(crate::diagnostics::Capture::Ready, 1);
+			}
+		}
+		if !capture.as_ref().is_some_and(|c| c.verified) || last_tick.elapsed() < TICK {
 			continue;
 		}
 		let stalled = last_tick.elapsed() >= Duration::from_millis(100);
@@ -767,25 +736,27 @@ fn run(
 			last_tick + TICK
 		};
 		let mut mixed = [0.0; FRAME_SAMPLES];
-		captures.retain_mut(|capture| {
-			if !capture.verified || capture.state() != pulse::PA_STREAM_READY {
-				return true;
+		let mut capture_ok = true;
+		if let Some(c) = capture.as_mut() {
+			if c.verified && c.state() == pulse::PA_STREAM_READY {
+				let start = metrics.start();
+				if c.read().is_err() {
+					metrics.capture(crate::diagnostics::Capture::Dropped, 1);
+					capture_ok = false;
+				} else {
+					metrics.finish(crate::diagnostics::Stage::CaptureRead, start);
+					if stalled {
+						c.pending.samples.clear();
+					}
+					c.pending.mix(&mut mixed, active_epoch);
+				}
 			}
-			let start = metrics.start();
-			// Validation failures need not change Pulse's READY state. Retire the attachment
-			// explicitly so the next listing can reconnect it without retaining stale PCM.
-			if capture.read().is_err() {
-				metrics.capture(crate::diagnostics::Capture::Dropped, 1);
-				next_listing = Instant::now();
-				return false;
-			}
-			metrics.finish(crate::diagnostics::Stage::CaptureRead, start);
-			if stalled {
-				capture.pending.samples.clear();
-			}
-			capture.pending.mix(&mut mixed, active_epoch);
-			true
-		});
+		}
+		if !capture_ok {
+			capture = None;
+			next_listing = Instant::now();
+			continue;
+		}
 		if ready.load(Ordering::Acquire)
 			&& epoch.load(Ordering::Acquire) == active_epoch
 			&& !stop.load(Ordering::Acquire)
@@ -805,6 +776,7 @@ fn run(
 /// Drops one application's audio after its monitor was refused, keeping the rest of the
 /// share. The list is bounded, so a machine that keeps refusing simply ends up sharing no
 /// audio rather than no screen.
+#[allow(dead_code)]
 fn exclude(excluded: &mut Vec<Input>, input: Input) {
 	if excluded.len() < MAX_INPUTS && !excluded.contains(&input) {
 		excluded.push(input);

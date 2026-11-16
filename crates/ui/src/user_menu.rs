@@ -246,9 +246,8 @@ pub(super) fn contents(
 			roles_menu(ui, state, guild, user.id, action);
 		}
 	}
-	if user.webhook || state.user.as_ref().is_some_and(|own| own.id == user.id) {
-		return;
-	}
+	let own_user = state.user.as_ref().is_some_and(|own| own.id == user.id);
+	if !user.webhook && !own_user {
 	let dm = state
 		.channels
 		.iter()
@@ -453,6 +452,15 @@ pub(super) fn contents(
 		.and_then(|id| state.channel(id).and_then(|channel| channel.guild))
 	{
 		moderation_menu(ui, state, guild, user, action);
+	}
+	}
+	ui.separator();
+	if ui
+		.button(crate::i18n::translate_if_key("user-menu-contents-copy-user-id"))
+		.clicked()
+	{
+		ui.ctx().copy_text(user.id.to_string());
+		ui.close();
 	}
 }
 
